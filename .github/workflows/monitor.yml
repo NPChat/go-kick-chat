@@ -1,0 +1,83 @@
+name: Monitor de Status (Kick API)
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do Código
+        uses: actions/checkout@v3
+
+      - name: Configurar Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+
+      - name: Rodar Testes de Conexão
+        id: test
+        shell: bash
+        run: |
+          # até 3 vezes antes de falhar
+          MAX_RETRIES=3
+          RETRY_DELAY=15
+          
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+            echo "tentativa $i de $MAX_RETRIES..."
+            
+            if go test -v -timeout 30s ./...; then
+              echo "teste passou na tentativa $i!"
+              exit 0
+            fi
+            
+            echo "falha na tentativa $i."
+            
+            if [ $i -lt $MAX_RETRIES ]; then
+              sleep $RETRY_DELAY
+            fi
+          done
+          
+          echo "Todas as $MAX_RETRIES tentativas falharam. Falha confirmada."
+          exit 1
+
+      - name: Notificar Discord (Falha)
+        if: failure()
+        uses: rjstone/discord-webhook-notify@v1
+        with:
+            severity: error
+            username: "⚠️ Kick Monitor Bot"
+            description: "**ALERTA CRÍTICO: A LIB CAIU!**"
+            details: |
+              A verificação automática falhou. Confira se:
+              1. A API do Kick mudou.
+              2. A Chave Pusher expirou.
+              3. A Kick está totalmente fora do ar.
+              
+              [Ver Logs no GitHub](https://github.com/${{ github.repository }}/actions)
+            webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+      - name: Notificar Discord (Sucesso Manual)
+        if: success() && github.event_name == 'workflow_dispatch'
+        uses: rjstone/discord-webhook-notify@v1
+        with:
+            severity: info
+            username: "✅ Kick Monitor Bot"
+            description: "**Status OK**"
+            details: "A verificação manual confirmou que a API está funcionando."
+            webhookUrl: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+  keepalive:
+    runs-on: ubuntu-latest
+    needs: health-check
+    if: always()
+    steps:
+      - uses: actions/checkout@v3
+      - uses: gautamkrishnar/keepalive-workflow@v1
+        with:
+          commit_message: "Automated keepalive [skip ci]"
