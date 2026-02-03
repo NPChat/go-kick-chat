@@ -169,6 +169,11 @@ func (c *Client) connectWS(ctx context.Context) error {
 	c.conn = conn
 	c.mu.Unlock()
 
+	go func() {
+		<-ctx.Done()
+		c.closeConn()
+	}()
+
 	defer c.closeConn()
 
 	wsCtx, cancelWs := context.WithCancel(ctx)
@@ -186,6 +191,9 @@ func (c *Client) connectWS(ctx context.Context) error {
 	for {
 		_, msgBytes, err := c.conn.ReadMessage()
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 		c.handleMessage(msgBytes)
